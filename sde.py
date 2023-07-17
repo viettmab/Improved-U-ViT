@@ -277,3 +277,39 @@ def LSimple(score_model: ScoreModel, x0, pred='noise_pred', **kwargs):
         return mos(x0 - x0_pred)
     else:
         raise NotImplementedError(pred)
+
+
+def L2steps(score_model: ScoreModel, x0, **kwargs):
+    t, noise, xt = score_model.sde.sample(x0,t_init=1e-3) # Avoid case t_prev=0
+    noise_pred = score_model.noise_pred(xt, t, **kwargs)
+    x0_pred = stp(score_model.sde.cum_alpha(t).rsqrt(), xt) - stp(score_model.sde.nsr(t).sqrt(), noise_pred)
+    mse = mos(noise - noise_pred)
+
+    def residual_loss(xt_prev,t_prev):
+        noise_prev_pred = score_model.noise_pred(xt_prev, t_prev, **kwargs)
+        x0_prev_pred = stp(score_model.sde.cum_alpha(t_prev).rsqrt(), xt_prev) - stp(score_model.sde.nsr(t_prev).sqrt(), noise_prev_pred)
+        x0_prev_pred = (x0_prev_pred + x0_pred) / 2
+        return mos(stp(score_model.sde.snr(t_prev).sqrt(),(x0 - x0_prev_pred)))
+    t_prev = torch.clamp(t - 1/1000, min=1e-4) # t_prev = t-T/sample_steps
+    #First residual
+    mean_first, std = score_model.sde.marginal_prob(x0, t_prev)
+    xt_prev_first = mean_first + stp(std, torch.randn_like(x0))
+    mse_first = residual_loss(xt_prev_first,t_prev)
+
+    #Second residual - Revese using euler_maruyama
+    #5 lines below are the same when using ReverseSDE class
+    diffusion = score_model.sde.diffusion(t) # g(t)
+    cum_beta = score_model.sde.cum_beta(t)
+    score = stp(-cum_beta.rsqrt(), noise_pred)
+    drift = score_model.sde.drift(xt, t)  # f(x, t)
+    drift = drift - stp(diffusion ** 2, score)
+    
+    dt = t_prev - t
+    dt = dt.view(dt.shape[0], 1, 1, 1)
+    mean_second = xt + drift * dt
+    sigma = diffusion.view(diffusion.shape[0], 1, 1, 1) * (-dt).sqrt()
+    xt_prev_second = mean_second + stp(sigma, torch.randn_like(xt))
+    mse_second = residual_loss(xt_prev_second,t_prev)
+    mse += (mse_first+mse_second)/2
+    
+    return mse

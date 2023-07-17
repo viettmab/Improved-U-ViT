@@ -77,12 +77,19 @@ def train(config):
     def train_step(_batch):
         _metrics = dict()
         optimizer.zero_grad()
-        if config.train.mode == 'uncond':
-            loss = sde.LSimple(score_model, _batch, pred=config.pred)
-        elif config.train.mode == 'cond':
-            loss = sde.LSimple(score_model, _batch[0], pred=config.pred, y=_batch[1])
+        if config.train.type == '2steps':
+            if config.train.mode == 'uncond':
+                loss = sde.L2steps(score_model, _batch)
+        elif config.train.type == 'simple':
+            if config.train.mode == 'uncond':
+                loss = sde.LSimple(score_model, _batch, pred=config.pred)
+            elif config.train.mode == 'cond':
+                loss = sde.LSimple(score_model, _batch[0], pred=config.pred, y=_batch[1])
+            else:
+                raise NotImplementedError(config.train.mode)
         else:
-            raise NotImplementedError(config.train.mode)
+            raise NotImplementedError(config.train.type)
+    
         _metrics['loss'] = accelerator.gather(loss.detach()).mean()
         accelerator.backward(loss.mean())
         if 'grad_clip' in config and config.grad_clip > 0:

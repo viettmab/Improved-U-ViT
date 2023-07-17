@@ -16,6 +16,7 @@ def get_config():
         n_steps=500000,
         batch_size=128,
         mode='uncond',
+        type='2steps',
         log_interval=10,
         eval_interval=5000,
         save_interval=50000,
